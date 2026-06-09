@@ -7,7 +7,7 @@
       "api_model": "gpt-image-1.5",
       "endpoints": [
         {
-          "base_url": "https://wangjt-copilot-resource.services.ai.azure.com/openai/v1/images/generations",
+          "base_url": "https://copilot-resource.services.ai.azure.com/openai/v1/images/generations",
           "api_key_env": "AZURE_API_KEY",
           "auth": "bearer"
         },
@@ -29,7 +29,7 @@
       "api_model": "gpt-image-2",
       "endpoints": [
         {
-          "base_url": "https://wangjt-copilot-resource.services.ai.azure.com/openai/v1/images/generations",
+          "base_url": "https://copilot-resource.services.ai.azure.com/openai/v1/images/generations",
           "api_key_env": "AZURE_API_KEY",
           "auth": "api-key"
         }
@@ -45,7 +45,7 @@
       "api_model": "FLUX.2-pro",
       "endpoints": [
         {
-          "base_url": "https://wangjt-copilot-resource.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-pro?api-version=preview",
+          "base_url": "https://copilot-resource.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-pro?api-version=preview",
           "api_key_env": "AZURE_API_KEY",
           "auth": "bearer"
         }
