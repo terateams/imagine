@@ -35,11 +35,11 @@ command -v imagine && imagine version
 征得同意后选其一：
 
 ```bash
-# 方式 A：一键安装（推荐，自动判断系统类型，下载预编译二进制并校验 SHA-256；
-#          无预编译二进制时回退到用 Zig 从源码构建）
+# 方式 A：一键安装（推荐，自动判断系统类型，直接从 GitHub release 下载预编译
+#          二进制和技能包并校验 SHA-256，不编译）
 curl -fsSL https://raw.githubusercontent.com/terateams/imagine/main/install.sh | sh
 
-# 方式 B：在源码仓库内开发安装
+# 方式 B：在源码仓库内开发安装（或目标平台无预编译产物时从源码构建，需 Zig ≥ 0.16.0）
 make install
 ```
 
@@ -50,8 +50,9 @@ make install
 > <https://github.com/terateams/imagine/releases/latest> 下载
 > `imagine-windows-x86_64.exe`（或 `-aarch64`）放入 PATH。
 >
-> 一键脚本默认下载预编译二进制，无需本地 Zig。仅当目标平台无预编译产物时才回退到
-> 源码构建（需 Zig ≥ 0.16.0；macOS: `brew install zig`，或 https://ziglang.org/download/）。
+> 一键脚本只下载预编译产物，不依赖本地 Zig；可用 `IMAGINE_VERSION=v0.1.0` 锁定版本。
+> 若目标平台没有预编译二进制（脚本会报错并提示），改用方式 B 从源码构建
+> （需 Zig ≥ 0.16.0；macOS: `brew install zig`，或 https://ziglang.org/download/）。
 
 ## 第 1 步：配置
 

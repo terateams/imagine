@@ -19,8 +19,8 @@ First backends: Azure `gpt-image-1.5`, `gpt-image-2` (image generations) and
 ## Install
 
 One-liner for Linux / macOS (auto-detects OS/arch, downloads the prebuilt
-binary, verifies its SHA-256, and falls back to building from source with Zig
-if no prebuilt binary is available):
+binary and agent skill from the GitHub release, and verifies their SHA-256 —
+no compilation):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/terateams/imagine/main/install.sh | sh
@@ -37,7 +37,7 @@ it on your `PATH`.
 Prebuilt binaries are published for every tagged release across Linux, macOS,
 and Windows on both `x86_64` and `arm64`.
 
-From a source checkout:
+From a source checkout (or any platform without a prebuilt binary):
 
 ```bash
 make install        # build + install binary and skill
