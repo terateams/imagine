@@ -3,6 +3,12 @@
 [![CI](https://github.com/terateams/imagine/actions/workflows/ci.yml/badge.svg)](https://github.com/terateams/imagine/actions/workflows/ci.yml)
 [![Release](https://github.com/terateams/imagine/actions/workflows/release.yml/badge.svg)](https://github.com/terateams/imagine/actions/workflows/release.yml)
 
+---
+
+![](imagine.png)
+
+---
+
 A universal **image-generation CLI for AI agents**. Unified front-end
 parameters, routed to different backends by model name. One model can have
 multiple endpoints (URL + key) for concurrent scheduling. Single static Zig
@@ -15,6 +21,7 @@ binary — no `curl`/`jq`/`base64` dependencies.
 
 First backends: Azure `gpt-image-1.5`, `gpt-image-2` (image generations) and
 `FLUX.2-pro` (Black Forest Labs).
+
 
 ## Install
 
