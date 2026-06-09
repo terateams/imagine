@@ -131,11 +131,15 @@ fn parseEndpoint(arena: Allocator, env: Env, v: Value) !types.Endpoint {
 
     // Resolve credential now when possible, but never fail here: listing and
     // `config show` must work without keys present. Generation validates later.
+    // Trim surrounding whitespace/newlines: a trailing '\n' (common with
+    // `export KEY=$(cat file)`) would otherwise produce an invalid auth header.
     if (ep.api_key) |k| {
-        ep.resolved_key = k;
+        const t = std.mem.trim(u8, k, " \t\r\n");
+        if (t.len > 0) ep.resolved_key = t;
     } else if (ep.api_key_env) |name| {
         if (env.get(name)) |val| {
-            if (val.len > 0) ep.resolved_key = try arena.dupe(u8, val);
+            const t = std.mem.trim(u8, val, " \t\r\n");
+            if (t.len > 0) ep.resolved_key = try arena.dupe(u8, t);
         }
     }
     return ep;

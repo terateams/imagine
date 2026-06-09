@@ -13,6 +13,8 @@ const util = @import("util.zig");
 const azure_image = @import("backends/azure_image.zig");
 const azure_flux = @import("backends/azure_flux.zig");
 
+const user_agent = "imagine/" ++ @import("version.zig").string;
+
 /// Construct the provider request body for a model's backend.
 pub fn buildBody(kind: types.BackendKind, allocator: std.mem.Allocator, req: types.ImageRequest) ![]u8 {
     return switch (kind) {
@@ -56,19 +58,29 @@ pub fn generate(
         ) };
     };
 
-    const auth_value = switch (endpoint.auth) {
-        .bearer => try std.fmt.allocPrint(allocator, "Bearer {s}", .{key}),
-        .api_key => key,
+    // Standard headers go through std.http's overridable `headers` field so
+    // each is emitted exactly once. Putting User-Agent in `extra_headers`
+    // instead produced a DUPLICATE User-Agent (std.http adds its own default),
+    // which Azure's gateway rejects as "Bad Request - Invalid Header".
+    var std_headers: http.StdHeaders = .{
+        .user_agent = .{ .override = user_agent },
+        .content_type = .{ .override = "application/json" },
     };
-    const headers = [_]http.Header{
-        .{ .name = endpoint.auth.headerName(), .value = auth_value },
-        .{ .name = "Content-Type", .value = "application/json" },
-        .{ .name = "User-Agent", .value = "imagine/" ++ @import("version.zig").string },
-    };
+    var extra: []const http.Header = &.{};
+    var api_key_hdr: [1]http.Header = undefined;
+    switch (endpoint.auth) {
+        .bearer => std_headers.authorization = .{
+            .override = try std.fmt.allocPrint(allocator, "Bearer {s}", .{key}),
+        },
+        .api_key => {
+            api_key_hdr[0] = .{ .name = endpoint.auth.headerName(), .value = key };
+            extra = api_key_hdr[0..1];
+        },
+    }
 
     const body = try buildBody(model.backend, allocator, req);
 
-    const res = http.post(client, allocator, endpoint.base_url, &headers, body) catch |e| {
+    const res = http.post(client, allocator, endpoint.base_url, std_headers, extra, body) catch |e| {
         return .{ .err = try std.fmt.allocPrint(allocator, "request failed: {s}", .{@errorName(e)}) };
     };
 
@@ -84,7 +96,7 @@ pub fn generate(
                 switch (p) {
                     .bytes => |b| out[i] = b,
                     .url => |u| {
-                        const dl = http.get(client, allocator, u, &.{}) catch |e| {
+                        const dl = http.get(client, allocator, u, .{ .user_agent = .{ .override = user_agent } }, &.{}) catch |e| {
                             return .{ .err = try std.fmt.allocPrint(allocator, "failed to download image url: {s}", .{@errorName(e)}) };
                         };
                         out[i] = dl.body;
