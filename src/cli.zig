@@ -80,18 +80,23 @@ pub const usage =
     \\  -p, --prompt <text>       Text prompt (required; or pass as positional)
     \\  -o, --output <path>       Output file (single) or stem (multiple)
     \\  -n, --n <count>           Number of images (default 1)
-    \\  -s, --size <WxH>          e.g. 1024x1024
-    \\      --width <px>          Width (FLUX-style models)
-    \\      --height <px>         Height
-    \\      --format <fmt>        png | jpeg | webp
-    \\      --compression <0-100> Output compression
-    \\      --quality <q>         low | medium | high | auto
+    \\  -s, --size <WxH>          Size for gpt-image models (see MODEL SIZES)
+    \\      --width <px>          Width for FLUX models (use instead of --size)
+    \\      --height <px>         Height for FLUX models
+    \\      --format <fmt>        png | jpeg   (gpt-image output_format)
+    \\      --compression <0-100> Output compression (gpt-image)
+    \\      --quality <q>         low | medium | high | auto   (gpt-image)
     \\      --seed <int>          Seed (where supported)
     \\  -c, --concurrency <num>   Parallel requests (default: endpoint count)
     \\      --config <path>       Use a specific config file
     \\      --json                Emit a JSON result object to stdout
     \\      --dry-run             Print request bodies without calling the API
     \\  -q, --quiet               Suppress progress output
+    \\
+    \\MODEL SIZES (Azure):
+    \\  gpt-image-1.5   1024x1024, 1536x1024, 1024x1536, auto
+    \\  gpt-image-2     any WxH, both sides multiple of 16, longest edge <= 3840
+    \\  FLUX.2-pro      --width/--height each >= 64; width*height <= 2048x2048 (4 MP)
     \\
     \\ENVIRONMENT:
     \\  IMAGINE_CONFIG            Override config path (default ~/.imagine/config.json)

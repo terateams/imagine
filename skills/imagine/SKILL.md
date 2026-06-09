@@ -97,17 +97,27 @@ imagine generate -m gpt-image-1.5 -p "a red fox" -o fox.png --json
 | `-p, --prompt` | 提示词（必填，也可作位置参数） |
 | `-o, --output` | 输出文件（单张）或文件名前缀（多张） |
 | `-n, --n` | 生成数量（默认 1） |
-| `-s, --size` | `1024x1024`（gpt-image 系） |
-| `--width / --height` | 宽高（FLUX 系） |
-| `--format` | `png` / `jpeg` / `webp` |
-| `--compression` | `0-100` |
-| `--quality` | `low` / `medium` / `high` / `auto` |
+| `-s, --size` | 尺寸（gpt-image 系，见下方"模型尺寸支持"） |
+| `--width / --height` | 宽高（FLUX 系，替代 `--size`） |
+| `--format` | `png` / `jpeg`（gpt-image 系；不支持 webp） |
+| `--compression` | `0-100`（gpt-image 系） |
+| `--quality` | `low` / `medium` / `high` / `auto`（gpt-image 系） |
 | `--seed` | 随机种子（部分模型） |
 | `-c, --concurrency` | 并发请求数（默认=端点数） |
 | `--config` | 指定配置文件 |
 | `--json` | 输出 JSON 结果对象 |
 | `--dry-run` | 只打印请求体 |
 | `-q, --quiet` | 静默进度 |
+
+### 模型尺寸支持（Azure，已对端点实测）
+
+| 模型 | 尺寸约束 |
+|------|----------|
+| `gpt-image-1.5` | `--size` 仅限 `1024x1024`、`1536x1024`（横）、`1024x1536`（竖）、`auto` |
+| `gpt-image-2` | `--size` 任意 `宽x高`，但宽高都须为 **16 的倍数**，最长边 ≤ **3840**（还有最小像素下限） |
+| `FLUX.2-pro` | 用 `--width/--height`，每边 ≥ **64**，且 `宽×高 ≤ 4 MP`（即 ≤ `2048x2048`），无 16 整除要求 |
+
+> 传入不支持的尺寸时，API 会返回明确的错误信息（例如 `Supported sizes are 1024x1024, 1024x1536, 1536x1024, and auto.`）。先 `--dry-run` 或读 `--json` 的 `errors[]` 可快速定位。
 
 ## 第 3 步：批量（manifest）
 

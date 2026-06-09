@@ -66,11 +66,11 @@ imagine version | help
 | `-p, --prompt <text>` | Prompt (**required**; or positional) |
 | `-o, --output <path>` | Output file (single) or stem (multiple) |
 | `-n, --n <count>` | Number of images (default 1) |
-| `-s, --size <WxH>` | e.g. `1024x1024` (gpt-image) |
-| `--width / --height <px>` | Dimensions (FLUX) |
-| `--format <fmt>` | `png` / `jpeg` / `webp` |
-| `--compression <0-100>` | Output compression |
-| `--quality <q>` | `low` / `medium` / `high` / `auto` |
+| `-s, --size <WxH>` | Size for gpt-image models (see [Model sizes](#model-sizes)) |
+| `--width / --height <px>` | Dimensions for FLUX models (use instead of `--size`) |
+| `--format <fmt>` | `png` / `jpeg` (gpt-image `output_format`) |
+| `--compression <0-100>` | Output compression (gpt-image) |
+| `--quality <q>` | `low` / `medium` / `high` / `auto` (gpt-image) |
 | `--seed <int>` | Seed (where supported) |
 | `-c, --concurrency <n>` | Parallel requests (default: endpoint count) |
 | `--config <path>` | Use a specific config file |
@@ -79,6 +79,18 @@ imagine version | help
 | `-q, --quiet` | Suppress progress |
 
 Exit codes: `0` success · `1` run failure (incl. partial) · `2` usage error.
+
+### Model sizes
+
+Verified against the live Azure endpoints:
+
+| Model | Size constraints |
+|-------|------------------|
+| `gpt-image-1.5` | `--size` ∈ `1024x1024`, `1536x1024` (landscape), `1024x1536` (portrait), `auto` |
+| `gpt-image-2` | `--size` = any `WxH` with both sides a multiple of **16**, longest edge ≤ **3840** (plus a minimum pixel budget) |
+| `FLUX.2-pro` | `--width`/`--height` each ≥ **64**, with `width × height ≤ 4 MP` (≤ `2048x2048`); no divisibility requirement |
+
+Unsupported sizes return a clear API error (e.g. `Supported sizes are 1024x1024, 1024x1536, 1536x1024, and auto.`).
 
 ### batch manifest
 
