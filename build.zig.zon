@@ -80,5 +80,6 @@
         "Makefile",
         "install.sh",
         "skills",
+        "config.example.json",
     },
 }

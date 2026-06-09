@@ -98,6 +98,14 @@ Per-job keys: `model, prompt, output, size, width, height, n, format, compressio
 
 Path resolution: `--config` > `$IMAGINE_CONFIG` > `~/.imagine/config.json`.
 
+A ready-to-edit sample lives at [`config.example.json`](config.example.json)
+(it shows a model with **two endpoints** for concurrent scheduling). Copy it,
+or run `imagine config init` to write the built-in starter:
+
+```bash
+cp config.example.json ~/.imagine/config.json   # then edit URLs/keys
+```
+
 ```jsonc
 {
   "output_dir": "~/.imagine/outputs",
