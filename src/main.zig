@@ -13,6 +13,7 @@ const backend = @import("backend.zig");
 const scheduler = @import("scheduler.zig");
 const util = @import("util.zig");
 const version = @import("version.zig");
+const overlay = @import("overlay.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -63,10 +64,14 @@ fn runCommand(ctx: Ctx, cmd: cli.Command) !u8 {
         },
         .config_path => |c| cmdConfigPath(ctx, c),
         .config_init => |c| cmdConfigInit(ctx, c),
+        .config_convert => |c| cmdConfigConvert(ctx, c),
         .config_show => |c| cmdConfigShow(ctx, c),
         .models => |c| cmdModels(ctx, c),
         .generate => |g| cmdGenerate(ctx, g),
         .batch => |b| cmdBatch(ctx, b),
+        .svg_render => |r| cmdSvgRender(ctx, r),
+        .png_compose => |p| cmdPngCompose(ctx, p),
+        .compose => |c| cmdCompose(ctx, c),
     };
 }
 
@@ -83,6 +88,7 @@ fn cmdConfigPath(ctx: Ctx, c: cli.Common) !u8 {
 fn cmdConfigInit(ctx: Ctx, c: cli.ConfigInit) !u8 {
     const raw = try config.resolvePath(ctx.arena, ctx.env, c.common.config_path);
     const path = try expandPath(ctx, raw);
+    const fmt = selectInitFormat(ctx, c.format, path) catch return 2;
     const cwd = std.Io.Dir.cwd();
 
     const exists = blk: {
@@ -97,8 +103,41 @@ fn cmdConfigInit(ctx: Ctx, c: cli.ConfigInit) !u8 {
     if (util.dirName(path)) |_| {
         try util.ensureParentDir(ctx.io, cwd, path);
     }
-    try cwd.writeFile(ctx.io, .{ .sub_path = path, .data = config.template });
-    try outf(ctx, "wrote starter config to {s}\nedit it, then set your API key (default env: AZURE_API_KEY)\n", .{path});
+    const data = switch (fmt) {
+        .toml => config.template,
+        .json => config.json_template,
+    };
+    try cwd.writeFile(ctx.io, .{ .sub_path = path, .data = data });
+    try outf(ctx, "wrote starter {s} config to {s}\nedit it, then set your API key (default env: AZURE_API_KEY)\n", .{ fmt.toString(), path });
+    return 0;
+}
+
+fn cmdConfigConvert(ctx: Ctx, c: cli.ConfigConvert) !u8 {
+    var cfg = loadConfig(ctx, c.common.config_path) catch |e| return reportConfigError(ctx, e, c.common.config_path);
+    defer cfg.deinit();
+
+    const fmt = selectConvertFormat(ctx, c.to, c.output, cfg.source_format) catch return 2;
+    const rendered = try config.renderAlloc(ctx.arena, cfg, fmt);
+
+    if (c.output) |out_raw| {
+        const path = try expandPath(ctx, out_raw);
+        const cwd = std.Io.Dir.cwd();
+        const exists = blk: {
+            cwd.access(ctx.io, path, .{}) catch break :blk false;
+            break :blk true;
+        };
+        if (exists and !c.force) {
+            try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "output already exists: {s} (use --force to overwrite)\n", .{path}));
+            return 1;
+        }
+        if (util.dirName(path)) |_| {
+            try util.ensureParentDir(ctx.io, cwd, path);
+        }
+        try cwd.writeFile(ctx.io, .{ .sub_path = path, .data = rendered });
+        try outf(ctx, "wrote {s} config to {s}\n", .{ fmt.toString(), path });
+    } else {
+        try printOut(ctx.io, rendered);
+    }
     return 0;
 }
 
@@ -136,7 +175,7 @@ fn cmdConfigShow(ctx: Ctx, c: cli.Common) !u8 {
                 try ctx.arena.dupe(u8, "(unset)");
             eps[ei] = .{
                 .base_url = ep.base_url,
-                .auth = @tagName(ep.auth),
+                .auth = ep.auth.toString(),
                 .api_key_env = ep.api_key_env,
                 .key = key_disp,
             };
@@ -403,6 +442,89 @@ fn cmdBatch(ctx: Ctx, b: cli.Batch) !u8 {
 // result rendering
 // ---------------------------------------------------------------------------
 
+fn cmdCompose(ctx: Ctx, c: cli.Compose) !u8 {
+    const base = try expandPath(ctx, c.base.?);
+    const svg = try expandPath(ctx, c.svg.?);
+    const output = try expandPath(ctx, c.output.?);
+    const blend = if (c.blend) |b| overlay.BlendMode.fromString(b) orelse {
+        try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "unknown blend mode: {s}\n", .{b}));
+        return 2;
+    } else overlay.BlendMode.normal;
+
+    if (util.dirName(output)) |_| {
+        try util.ensureParentDir(ctx.io, std.Io.Dir.cwd(), output);
+    }
+
+    overlay.compose(ctx.arena, .{
+        .base_path = base,
+        .svg_path = svg,
+        .output_path = output,
+        .x = c.x,
+        .y = c.y,
+        .width = c.width,
+        .height = c.height,
+        .opacity = c.opacity,
+        .blend = blend,
+    }) catch |e| {
+        return reportOverlayError(ctx, "compose", e);
+    };
+
+    try outf(ctx, "wrote composed PNG to {s}\n", .{output});
+    return 0;
+}
+
+fn cmdSvgRender(ctx: Ctx, r: cli.SvgRender) !u8 {
+    const input = try expandPath(ctx, r.input.?);
+    const output = try expandPath(ctx, r.output.?);
+    if (util.dirName(output)) |_| {
+        try util.ensureParentDir(ctx.io, std.Io.Dir.cwd(), output);
+    }
+    overlay.renderSvgToPng(ctx.arena, .{
+        .input_path = input,
+        .output_path = output,
+        .width = r.width,
+        .height = r.height,
+    }) catch |e| return reportOverlayError(ctx, "svg render", e);
+    try outf(ctx, "wrote rendered PNG to {s}\n", .{output});
+    return 0;
+}
+
+fn cmdPngCompose(ctx: Ctx, p: cli.PngCompose) !u8 {
+    const base = try expandPath(ctx, p.base.?);
+    const output = try expandPath(ctx, p.output.?);
+    if (util.dirName(output)) |_| {
+        try util.ensureParentDir(ctx.io, std.Io.Dir.cwd(), output);
+    }
+
+    var layers = try ctx.arena.alloc(overlay.Layer, p.layers.len);
+    for (p.layers, 0..) |spec, i| {
+        layers[i] = parseLayerSpec(ctx, spec) catch |e| {
+            try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "invalid layer spec '{s}': {s}\n", .{ spec, @errorName(e) }));
+            return 2;
+        };
+    }
+
+    overlay.composePng(ctx.arena, .{
+        .base_path = base,
+        .output_path = output,
+        .layers = layers,
+    }) catch |e| return reportOverlayError(ctx, "png compose", e);
+    try outf(ctx, "wrote composed PNG to {s}\n", .{output});
+    return 0;
+}
+
+fn reportOverlayError(ctx: Ctx, command: []const u8, e: anyerror) !u8 {
+    switch (e) {
+        error.SvgOverlayDisabled => {
+            try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "{s} requires SVG rendering support; rebuild with 'zig build -Dsvg-overlay=true' and ensure libresvg is installed\n", .{command}));
+        },
+        else => {
+            try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "{s} failed: {s}\n", .{ command, @errorName(e) }));
+        },
+    }
+    return 1;
+}
+
 fn renderResults(ctx: Ctx, model: *const types.ModelConfig, tasks: []scheduler.Task, json: bool) !u8 {
     var ok_count: usize = 0;
     for (tasks) |*t| {
@@ -523,7 +645,40 @@ fn expandPath(ctx: Ctx, path: []const u8) ![]u8 {
 fn loadConfig(ctx: Ctx, explicit: ?[]const u8) !config.Config {
     const raw = try config.resolvePath(ctx.arena, ctx.env, explicit);
     const path = try expandPath(ctx, raw);
-    return config.loadFromFile(ctx.gpa, ctx.io, path, ctx.env);
+    return config.loadFromFile(ctx.gpa, ctx.io, path, ctx.env) catch |e| {
+        if (e == error.FileNotFound and explicit == null and ctx.env.get(config.env_config_path) == null) {
+            const legacy_raw = try config.resolveLegacyJsonPath(ctx.arena, ctx.env);
+            const legacy_path = try expandPath(ctx, legacy_raw);
+            return config.loadFromFile(ctx.gpa, ctx.io, legacy_path, ctx.env);
+        }
+        return e;
+    };
+}
+
+fn selectInitFormat(ctx: Ctx, requested: ?[]const u8, path: []const u8) !config.Format {
+    if (requested) |f| {
+        return config.Format.fromString(f) orelse {
+            try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "unknown config format: {s} (expected toml or json)\n", .{f}));
+            return error.InvalidConfigFormat;
+        };
+    }
+    return config.inferFormatFromPath(path) orelse .toml;
+}
+
+fn selectConvertFormat(ctx: Ctx, requested: ?[]const u8, output: ?[]const u8, input: ?config.Format) !config.Format {
+    if (requested) |f| {
+        return config.Format.fromString(f) orelse {
+            try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "unknown config format: {s} (expected toml or json)\n", .{f}));
+            return error.InvalidConfigFormat;
+        };
+    }
+    if (output) |p| {
+        if (config.inferFormatFromPath(p)) |f| return f;
+    }
+    return switch (input orelse .json) {
+        .json => .toml,
+        .toml => .json,
+    };
 }
 
 fn reportConfigError(ctx: Ctx, e: anyerror, explicit: ?[]const u8) !u8 {
@@ -545,6 +700,33 @@ fn reportUnknownModel(ctx: Ctx, cfg: *const config.Config, name: []const u8) !u8
         try printErr(ctx.io, try std.fmt.allocPrint(ctx.arena, "  {s}\n", .{m.name}));
     }
     return 1;
+}
+
+fn parseLayerSpec(ctx: Ctx, spec: []const u8) !overlay.Layer {
+    var parts = std.mem.splitScalar(u8, spec, ',');
+    const raw_path = parts.next() orelse return error.MissingLayerPath;
+    if (raw_path.len == 0) return error.MissingLayerPath;
+
+    var layer = overlay.Layer{ .path = try expandPath(ctx, raw_path) };
+    while (parts.next()) |part| {
+        if (part.len == 0) continue;
+        const eq = std.mem.indexOfScalar(u8, part, '=') orelse return error.BadLayerOption;
+        const key = part[0..eq];
+        const value = part[eq + 1 ..];
+        if (std.mem.eql(u8, key, "x")) {
+            layer.x = std.fmt.parseInt(i32, value, 10) catch return error.BadLayerX;
+        } else if (std.mem.eql(u8, key, "y")) {
+            layer.y = std.fmt.parseInt(i32, value, 10) catch return error.BadLayerY;
+        } else if (std.mem.eql(u8, key, "opacity")) {
+            layer.opacity = std.fmt.parseFloat(f32, value) catch return error.BadLayerOpacity;
+            if (layer.opacity < 0 or layer.opacity > 1 or !std.math.isFinite(layer.opacity)) return error.BadLayerOpacity;
+        } else if (std.mem.eql(u8, key, "blend")) {
+            layer.blend = overlay.BlendMode.fromString(value) orelse return error.BadLayerBlend;
+        } else {
+            return error.BadLayerOption;
+        }
+    }
+    return layer;
 }
 
 fn jsonStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {

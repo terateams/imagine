@@ -4,6 +4,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const strip = b.option(bool, "strip", "Strip debug symbols from the binary") orelse false;
+    const svg_overlay = b.option(bool, "svg-overlay", "Enable SVG/PNG composition via resvg C API") orelse false;
+    const resvg_include = b.option([]const u8, "resvg-include", "Directory containing resvg.h");
+    const resvg_lib = b.option([]const u8, "resvg-lib", "Directory containing libresvg");
 
     const exe = b.addExecutable(.{
         .name = "imagine",
@@ -14,6 +17,30 @@ pub fn build(b: *std.Build) void {
             .strip = strip,
         }),
     });
+    const options = b.addOptions();
+    options.addOption(bool, "svg_overlay_enabled", svg_overlay);
+    exe.root_module.addOptions("build_options", options);
+
+    exe.root_module.addIncludePath(b.path("src/c"));
+    exe.root_module.addIncludePath(b.path("vendor/stb"));
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/c/stb_shim.c") });
+    exe.root_module.linkSystemLibrary("c", .{});
+
+    if (svg_overlay) {
+        exe.root_module.addIncludePath(b.path("vendor/resvg"));
+        if (resvg_include) |p| {
+            exe.root_module.addSystemIncludePath(.{ .cwd_relative = p });
+        } else {
+            exe.root_module.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+        }
+        if (resvg_lib) |p| {
+            exe.root_module.addLibraryPath(.{ .cwd_relative = p });
+            exe.root_module.addRPath(.{ .cwd_relative = p });
+        } else {
+            exe.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+        }
+        exe.root_module.linkSystemLibrary("resvg", .{});
+    }
     b.installArtifact(exe);
 
     // `zig build run -- <args>`
@@ -31,6 +58,26 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    unit_tests.root_module.addOptions("build_options", options);
+    unit_tests.root_module.addIncludePath(b.path("src/c"));
+    unit_tests.root_module.addIncludePath(b.path("vendor/stb"));
+    unit_tests.root_module.addCSourceFile(.{ .file = b.path("src/c/stb_shim.c") });
+    unit_tests.root_module.linkSystemLibrary("c", .{});
+    if (svg_overlay) {
+        unit_tests.root_module.addIncludePath(b.path("vendor/resvg"));
+        if (resvg_include) |p| {
+            unit_tests.root_module.addSystemIncludePath(.{ .cwd_relative = p });
+        } else {
+            unit_tests.root_module.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+        }
+        if (resvg_lib) |p| {
+            unit_tests.root_module.addLibraryPath(.{ .cwd_relative = p });
+            unit_tests.root_module.addRPath(.{ .cwd_relative = p });
+        } else {
+            unit_tests.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+        }
+        unit_tests.root_module.linkSystemLibrary("resvg", .{});
+    }
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);

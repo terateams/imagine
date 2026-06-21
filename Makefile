@@ -7,29 +7,50 @@ BINDIR      ?= $(PREFIX)/bin
 AGENTS_DIR  ?= $(HOME)/.agents
 SKILL_DIR   ?= $(AGENTS_DIR)/skills/imagine
 OPTIMIZE    ?= ReleaseFast
+SVG_OVERLAY ?= 0
+RESVG_INCLUDE ?=
+RESVG_LIB ?=
 
 ZIG         ?= zig
 BIN_NAME    := imagine
 BUILD_BIN   := zig-out/bin/$(BIN_NAME)
+SVG_FLAGS   :=
+ifeq ($(SVG_OVERLAY),1)
+SVG_FLAGS += -Dsvg-overlay=true
+endif
+ifneq ($(RESVG_INCLUDE),)
+SVG_FLAGS += -Dresvg-include=$(RESVG_INCLUDE)
+endif
+ifneq ($(RESVG_LIB),)
+SVG_FLAGS += -Dresvg-lib=$(RESVG_LIB)
+endif
 
 .DEFAULT_GOAL := build
 
 # ----- build / test ------------------------------------------------------
 .PHONY: build
 build: ## Build the optimized binary
-	$(ZIG) build -Doptimize=$(OPTIMIZE)
+	$(ZIG) build -Doptimize=$(OPTIMIZE) $(SVG_FLAGS)
 
 .PHONY: debug
 debug: ## Build a debug binary
-	$(ZIG) build
+	$(ZIG) build $(SVG_FLAGS)
+
+.PHONY: build-svg
+build-svg: ## Build with SVG rendering/composition support via resvg
+	$(ZIG) build -Doptimize=$(OPTIMIZE) -Dsvg-overlay=true $(if $(RESVG_INCLUDE),-Dresvg-include=$(RESVG_INCLUDE),) $(if $(RESVG_LIB),-Dresvg-lib=$(RESVG_LIB),)
 
 .PHONY: test
 test: ## Run unit tests
-	$(ZIG) build test
+	$(ZIG) build test $(SVG_FLAGS)
+
+.PHONY: test-svg
+test-svg: ## Run tests with SVG rendering/composition support enabled
+	$(ZIG) build test -Dsvg-overlay=true $(if $(RESVG_INCLUDE),-Dresvg-include=$(RESVG_INCLUDE),) $(if $(RESVG_LIB),-Dresvg-lib=$(RESVG_LIB),)
 
 .PHONY: run
 run: ## Build & run (use ARGS="generate -m ... -p ...")
-	$(ZIG) build run -- $(ARGS)
+	$(ZIG) build run $(SVG_FLAGS) -- $(ARGS)
 
 .PHONY: fmt
 fmt: ## Format all Zig sources
@@ -52,6 +73,10 @@ install-bin: build ## Install only the binary
 	@mkdir -p "$(BINDIR)"
 	install -m 0755 "$(BUILD_BIN)" "$(BINDIR)/$(BIN_NAME)"
 	@echo "binary -> $(BINDIR)/$(BIN_NAME)"
+
+.PHONY: install-svg
+install-svg: SVG_OVERLAY=1
+install-svg: install ## Build/install binary with SVG rendering/composition support
 
 .PHONY: install-skill
 install-skill: ## Install only the skill into ~/.agents/skills/imagine

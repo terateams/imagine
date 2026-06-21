@@ -25,6 +25,13 @@ pub const AuthScheme = enum {
             .api_key => "api-key",
         };
     }
+
+    pub fn toString(self: AuthScheme) []const u8 {
+        return switch (self) {
+            .bearer => "bearer",
+            .api_key => "api-key",
+        };
+    }
 };
 
 /// Identifies which backend module builds a request body for a model. Adding a

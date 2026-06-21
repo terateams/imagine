@@ -58,7 +58,7 @@ Building from source requires **Zig ≥ 0.16.0** (`brew install zig` or
 ## Quick start
 
 ```bash
-imagine config init                 # write ~/.imagine/config.json (3 Azure models)
+imagine config init                 # write ~/.imagine/config.toml (3 Azure models)
 export AZURE_API_KEY="your-key"     # or edit the config file
 imagine models                      # check which models are ready
 
@@ -72,8 +72,11 @@ imagine generate -m gpt-image-2   -p "logo concept"   -n 4 -o logo.png -c 4
 ```
 imagine generate -m <model> -p <prompt> [options]
 imagine batch <manifest.json> [-c N] [--json]
+imagine svg render --input <svg> -o <png> [--width W --height H]
+imagine png compose --base <png> --layer <spec>... -o <png>
+imagine compose --base <png> --svg <svg> -o <png> [options]
 imagine models [--json]
-imagine config path | init [--force] | show
+imagine config path | init [--force] | convert | show
 imagine version | help
 ```
 
@@ -98,6 +101,51 @@ imagine version | help
 | `-q, --quiet` | Suppress progress |
 
 Exit codes: `0` success · `1` run failure (incl. partial) · `2` usage error.
+
+### image composition
+
+Image composition is split into two reusable steps. `svg render` turns an SVG
+into a transparent PNG at a controlled size. `png compose` overlays one or more
+PNG layers over a base PNG in the order the layers are provided. PNG decoding
+and encoding uses vendored `stb_image.h` / `stb_image_write.h`; SVG rendering
+uses the optional `resvg` C API build.
+
+```bash
+imagine svg render --input badge.svg -o badge.png --width 256
+imagine png compose --base photo.png \
+  --layer badge.png,x=24,y=24,opacity=1,blend=normal \
+  --layer shadow.png,x=20,y=28,opacity=0.45,blend=multiply \
+  -o composed.png
+```
+
+`compose` remains as a shortcut for the common one-SVG-over-one-PNG case:
+
+```bash
+imagine compose --base photo.png --svg badge.svg -o composed.png --x 24 --y 24 --width 256 --blend=normal
+```
+
+| Option | Description |
+|--------|-------------|
+| `svg render --input <svg>` | SVG input path |
+| `svg render -o, --output <png>` | Rendered PNG output path |
+| `svg render --width/--height <px>` | Rendered dimensions; one side preserves aspect ratio |
+| `png compose --base <png>` | Base PNG image |
+| `png compose --layer <spec>` | Layer spec: `path.png,x=0,y=0,opacity=1,blend=normal` |
+| `png compose -o, --output <png>` | Output PNG path |
+
+Blend modes: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`.
+This is useful for product images: text layers usually use `normal`, shadow
+layers use `multiply`, highlights use `screen`, and watermarks use `normal`
+with reduced `opacity`.
+
+The default build keeps this feature disabled so the core CLI remains portable.
+Build with `zig build -Dsvg-overlay=true` and install the `resvg` C API library
+first. A matching `resvg.h` is vendored; if you need to use headers or libraries
+from another location, pass:
+
+```bash
+zig build -Dsvg-overlay=true -Dresvg-include=/path/to/include -Dresvg-lib=/path/to/lib
+```
 
 ### Model sizes
 
@@ -127,39 +175,46 @@ Per-job keys: `model, prompt, output, size, width, height, n, format, compressio
 
 ## Configuration
 
-Path resolution: `--config` > `$IMAGINE_CONFIG` > `~/.imagine/config.json`.
+Path resolution: `--config` > `$IMAGINE_CONFIG` > `~/.imagine/config.toml`.
+If the default TOML file does not exist, imagine still tries the legacy
+`~/.imagine/config.json` path for backwards compatibility.
 
-A ready-to-edit sample lives at [`config.example.json`](config.example.json)
+A ready-to-edit sample lives at [`config.example.toml`](config.example.toml)
 (it shows a model with **two endpoints** for concurrent scheduling). Copy it,
 or run `imagine config init` to write the built-in starter:
 
 ```bash
-cp config.example.json ~/.imagine/config.json   # then edit URLs/keys
+cp config.example.toml ~/.imagine/config.toml   # then edit URLs/keys
 ```
 
-```jsonc
-{
-  "output_dir": "~/.imagine/outputs",
-  "concurrency": 0,                       // 0 = auto (endpoint count)
-  "models": {
-    "gpt-image-1.5": {
-      "backend": "azure_image",           // azure_image | azure_flux
-      "api_model": "gpt-image-1.5",
-      "endpoints": [                       // multiple → concurrent scheduling
-        {
-          "base_url": "https://<resource>.services.ai.azure.com/openai/v1/images/generations",
-          "api_key_env": "AZURE_API_KEY",  // or "api_key": "literal"
-          "auth": "bearer"                  // bearer | api-key
-        }
-      ],
-      "defaults": { "size": "1024x1024", "output_format": "png", "output_compression": 100, "quality": "high" }
-    }
-  }
-}
+```toml
+output_dir = "~/.imagine/outputs"
+concurrency = 0 # 0 = auto (endpoint count)
+
+[models."gpt-image-1.5"]
+backend = "azure_image" # azure_image | azure_flux
+api_model = "gpt-image-1.5"
+
+[[models."gpt-image-1.5".endpoints]]
+base_url = "https://<resource>.services.ai.azure.com/openai/v1/images/generations"
+api_key_env = "AZURE_API_KEY" # or api_key = "literal"
+auth = "bearer" # bearer | api-key
+
+[models."gpt-image-1.5".defaults]
+size = "1024x1024"
+output_format = "png"
+output_compression = 100
+quality = "high"
 ```
 
 Precedence — params: CLI > model `defaults` > built-in. Keys: endpoint
 `api_key` > `api_key_env`.
+
+Convert an existing JSON config to TOML:
+
+```bash
+imagine config convert --config ~/.imagine/config.json --to toml -o ~/.imagine/config.toml
+```
 
 ### `--json` result
 
@@ -175,6 +230,9 @@ Precedence — params: CLI > model `defaults` > built-in. Keys: endpoint
 make build      # zig build -Doptimize=ReleaseFast
 make test       # zig build test
 make run ARGS="generate -m gpt-image-1.5 -p 'a fox' --dry-run"
+make build-svg  # optional svg render / png compose support via resvg C API
+make test-svg
+make build SVG_OVERLAY=1 RESVG_LIB=/path/to/lib
 make fmt        # zig fmt
 make help       # list targets
 ```

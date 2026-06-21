@@ -38,17 +38,54 @@ pub const Batch = struct {
     quiet: bool = false,
 };
 
+pub const Compose = struct {
+    base: ?[]const u8 = null,
+    svg: ?[]const u8 = null,
+    output: ?[]const u8 = null,
+    x: i32 = 0,
+    y: i32 = 0,
+    width: ?u32 = null,
+    height: ?u32 = null,
+    opacity: f32 = 1.0,
+    blend: ?[]const u8 = null,
+};
+
+pub const SvgRender = struct {
+    input: ?[]const u8 = null,
+    output: ?[]const u8 = null,
+    width: ?u32 = null,
+    height: ?u32 = null,
+};
+
+pub const PngCompose = struct {
+    base: ?[]const u8 = null,
+    output: ?[]const u8 = null,
+    layers: []const []const u8 = &.{},
+};
+
 pub const ConfigInit = struct {
     common: Common = .{},
+    force: bool = false,
+    format: ?[]const u8 = null,
+};
+
+pub const ConfigConvert = struct {
+    common: Common = .{},
+    output: ?[]const u8 = null,
+    to: ?[]const u8 = null,
     force: bool = false,
 };
 
 pub const Command = union(enum) {
     generate: Generate,
     batch: Batch,
+    compose: Compose,
+    svg_render: SvgRender,
+    png_compose: PngCompose,
     models: Common,
     config_path: Common,
     config_init: ConfigInit,
+    config_convert: ConfigConvert,
     config_show: Common,
     version,
 };
@@ -68,9 +105,13 @@ pub const usage =
     \\COMMANDS:
     \\  generate        Generate image(s) from a prompt
     \\  batch <file>    Generate from a JSON manifest of jobs
+    \\  svg render      Render an SVG to a PNG
+    \\  png compose     Compose PNG layers over a base PNG
+    \\  compose         Shortcut: render one SVG and overlay it on a PNG
     \\  models          List configured models (--json for machine output)
     \\  config path     Print the resolved config file path
     \\  config init     Write a starter config (--force to overwrite)
+    \\  config convert  Convert config between TOML and JSON
     \\  config show     Print effective config (credentials redacted)
     \\  version         Print version
     \\  help            Show this help
@@ -93,20 +134,46 @@ pub const usage =
     \\      --dry-run             Print request bodies without calling the API
     \\  -q, --quiet               Suppress progress output
     \\
+    \\SVG RENDER OPTIONS:
+    \\      --input <svg>         Input SVG (required)
+    \\  -o, --output <png>        Output PNG path (required)
+    \\      --width <px>          Rendered width
+    \\      --height <px>         Rendered height
+    \\
+    \\PNG COMPOSE OPTIONS:
+    \\      --base <png>          Base PNG image (required)
+    \\      --layer <spec>        Layer spec: path.png,x=0,y=0,opacity=1,blend=normal
+    \\  -o, --output <png>        Output PNG path (required)
+    \\
+    \\COMPOSE SHORTCUT OPTIONS:
+    \\      --base <png>          Base PNG image (required)
+    \\      --svg <svg>           SVG overlay image (required)
+    \\  -o, --output <png>        Output PNG path (required)
+    \\      --x <px>              Overlay x offset (default 0)
+    \\      --y <px>              Overlay y offset (default 0)
+    \\      --width <px>          Rendered SVG width
+    \\      --height <px>         Rendered SVG height
+    \\      --opacity <0-1>       Layer opacity (default 1)
+    \\      --blend <mode>        normal | multiply | screen | overlay | darken | lighten
+    \\
     \\MODEL SIZES (Azure):
     \\  gpt-image-1.5   1024x1024, 1536x1024, 1024x1536, auto
     \\  gpt-image-2     any WxH, both sides multiple of 16, longest edge <= 3840
     \\  FLUX.2-pro      --width/--height each >= 64; width*height <= 2048x2048 (4 MP)
     \\
     \\ENVIRONMENT:
-    \\  IMAGINE_CONFIG            Override config path (default ~/.imagine/config.json)
+    \\  IMAGINE_CONFIG            Override config path (default ~/.imagine/config.toml)
     \\
     \\EXAMPLES:
     \\  imagine generate -m gpt-image-1.5 -p "a red fox in autumn" -o fox.png
     \\  imagine generate -m FLUX.2-pro -p "a city at dusk" --width 1024 --height 1024
     \\  imagine generate -m gpt-image-2 -p "logo" -n 4 -o logo.png -c 4
     \\  imagine batch jobs.json
+    \\  imagine svg render --input badge.svg -o badge.png --width 256
+    \\  imagine png compose --base photo.png --layer badge.png,x=24,y=24,blend=normal -o composed.png
+    \\  imagine compose --base photo.png --svg badge.svg -o composed.png --x 24 --y 24 --width 256
     \\  imagine models --json
+    \\  imagine config convert --config ~/.imagine/config.json --to toml -o ~/.imagine/config.toml
     \\
 ;
 
@@ -153,6 +220,15 @@ pub fn parse(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
     }
     if (std.mem.eql(u8, cmd, "batch")) {
         return parseBatch(arena, args[1..]);
+    }
+    if (std.mem.eql(u8, cmd, "svg")) {
+        return parseSvg(arena, args[1..]);
+    }
+    if (std.mem.eql(u8, cmd, "png")) {
+        return parsePng(arena, args[1..]);
+    }
+    if (std.mem.eql(u8, cmd, "compose")) {
+        return parseCompose(arena, args[1..]);
     }
     if (std.mem.eql(u8, cmd, "models")) {
         return parseCommon(arena, args[1..], .models);
@@ -259,6 +335,114 @@ fn parseBatch(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
     return .{ .command = .{ .batch = b } };
 }
 
+fn parseI32(s: []const u8) ?i32 {
+    return std.fmt.parseInt(i32, s, 10) catch null;
+}
+
+fn parseF32(s: []const u8) ?f32 {
+    return std.fmt.parseFloat(f32, s) catch null;
+}
+
+fn parseCompose(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
+    var c = Compose{};
+    var cur = Cursor{ .args = args };
+    while (cur.i < args.len) : (cur.i += 1) {
+        const fs = split(args[cur.i]);
+        const name = fs.name;
+        if (std.mem.eql(u8, name, "--base")) {
+            c.base = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.eql(u8, name, "--svg")) {
+            c.svg = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.eql(u8, name, "-o") or std.mem.eql(u8, name, "--output")) {
+            c.output = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.eql(u8, name, "--x")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            c.x = parseI32(v) orelse return .{ .err = try std.fmt.allocPrint(arena, "invalid --x: {s}", .{v}) };
+        } else if (std.mem.eql(u8, name, "--y")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            c.y = parseI32(v) orelse return .{ .err = try std.fmt.allocPrint(arena, "invalid --y: {s}", .{v}) };
+        } else if (std.mem.eql(u8, name, "--width")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            c.width = parseU32(v) orelse return .{ .err = try std.fmt.allocPrint(arena, "invalid --width: {s}", .{v}) };
+        } else if (std.mem.eql(u8, name, "--height")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            c.height = parseU32(v) orelse return .{ .err = try std.fmt.allocPrint(arena, "invalid --height: {s}", .{v}) };
+        } else if (std.mem.eql(u8, name, "--opacity")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            c.opacity = parseF32(v) orelse return .{ .err = try std.fmt.allocPrint(arena, "invalid --opacity: {s}", .{v}) };
+        } else if (std.mem.eql(u8, name, "--blend")) {
+            c.blend = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.startsWith(u8, name, "-")) {
+            return unknownFlag(arena, name);
+        }
+    }
+    if (c.base == null) return .{ .err = try arena.dupe(u8, "compose requires --base <png>") };
+    if (c.svg == null) return .{ .err = try arena.dupe(u8, "compose requires --svg <svg>") };
+    if (c.output == null) return .{ .err = try arena.dupe(u8, "compose requires --output <png>") };
+    if (c.width == 0 or c.height == 0) return .{ .err = try arena.dupe(u8, "--width/--height must be >= 1 when provided") };
+    if (c.opacity < 0 or c.opacity > 1) return .{ .err = try arena.dupe(u8, "--opacity must be between 0 and 1") };
+    return .{ .command = .{ .compose = c } };
+}
+
+fn parseSvg(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
+    if (args.len == 0) return .{ .err = try arena.dupe(u8, "svg requires a subcommand: render") };
+    if (!std.mem.eql(u8, args[0], "render")) {
+        return .{ .err = try std.fmt.allocPrint(arena, "unknown svg subcommand: '{s}'", .{args[0]}) };
+    }
+    var r = SvgRender{};
+    var cur = Cursor{ .args = args[1..] };
+    while (cur.i < args[1..].len) : (cur.i += 1) {
+        const fs = split(args[1..][cur.i]);
+        const name = fs.name;
+        if (std.mem.eql(u8, name, "--input") or std.mem.eql(u8, name, "-i")) {
+            r.input = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.eql(u8, name, "-o") or std.mem.eql(u8, name, "--output")) {
+            r.output = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.eql(u8, name, "--width")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            r.width = parseU32(v) orelse return .{ .err = try std.fmt.allocPrint(arena, "invalid --width: {s}", .{v}) };
+        } else if (std.mem.eql(u8, name, "--height")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            r.height = parseU32(v) orelse return .{ .err = try std.fmt.allocPrint(arena, "invalid --height: {s}", .{v}) };
+        } else if (std.mem.startsWith(u8, name, "-")) {
+            return unknownFlag(arena, name);
+        }
+    }
+    if (r.input == null) return .{ .err = try arena.dupe(u8, "svg render requires --input <svg>") };
+    if (r.output == null) return .{ .err = try arena.dupe(u8, "svg render requires --output <png>") };
+    if (r.width == 0 or r.height == 0) return .{ .err = try arena.dupe(u8, "--width/--height must be >= 1 when provided") };
+    return .{ .command = .{ .svg_render = r } };
+}
+
+fn parsePng(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
+    if (args.len == 0) return .{ .err = try arena.dupe(u8, "png requires a subcommand: compose") };
+    if (!std.mem.eql(u8, args[0], "compose")) {
+        return .{ .err = try std.fmt.allocPrint(arena, "unknown png subcommand: '{s}'", .{args[0]}) };
+    }
+    var p = PngCompose{};
+    var layers = std.ArrayList([]const u8).empty;
+    var cur = Cursor{ .args = args[1..] };
+    while (cur.i < args[1..].len) : (cur.i += 1) {
+        const fs = split(args[1..][cur.i]);
+        const name = fs.name;
+        if (std.mem.eql(u8, name, "--base")) {
+            p.base = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.eql(u8, name, "--layer")) {
+            const v = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            try layers.append(arena, v);
+        } else if (std.mem.eql(u8, name, "-o") or std.mem.eql(u8, name, "--output")) {
+            p.output = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+        } else if (std.mem.startsWith(u8, name, "-")) {
+            return unknownFlag(arena, name);
+        }
+    }
+    if (p.base == null) return .{ .err = try arena.dupe(u8, "png compose requires --base <png>") };
+    if (p.output == null) return .{ .err = try arena.dupe(u8, "png compose requires --output <png>") };
+    if (layers.items.len == 0) return .{ .err = try arena.dupe(u8, "png compose requires at least one --layer <spec>") };
+    p.layers = try layers.toOwnedSlice(arena);
+    return .{ .command = .{ .png_compose = p } };
+}
+
 fn parseCommon(arena: std.mem.Allocator, args: []const []const u8, comptime tag: std.meta.Tag(Command)) !Parsed {
     var c = Common{};
     var cur = Cursor{ .args = args };
@@ -282,10 +466,30 @@ fn parseCommon(arena: std.mem.Allocator, args: []const []const u8, comptime tag:
 }
 
 fn parseConfig(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
-    if (args.len == 0) return .{ .err = try arena.dupe(u8, "config requires a subcommand: path | init | show") };
+    if (args.len == 0) return .{ .err = try arena.dupe(u8, "config requires a subcommand: path | init | convert | show") };
     const sub = args[0];
     if (std.mem.eql(u8, sub, "path")) return parseCommon(arena, args[1..], .config_path);
     if (std.mem.eql(u8, sub, "show")) return parseCommon(arena, args[1..], .config_show);
+    if (std.mem.eql(u8, sub, "convert")) {
+        var cc = ConfigConvert{};
+        var cur = Cursor{ .args = args[1..] };
+        while (cur.i < args[1..].len) : (cur.i += 1) {
+            const fs = split(args[1..][cur.i]);
+            const name = fs.name;
+            if (std.mem.eql(u8, name, "--config")) {
+                cc.common.config_path = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            } else if (std.mem.eql(u8, name, "--to") or std.mem.eql(u8, name, "--format")) {
+                cc.to = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            } else if (std.mem.eql(u8, name, "-o") or std.mem.eql(u8, name, "--output")) {
+                cc.output = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            } else if (std.mem.eql(u8, name, "--force") or std.mem.eql(u8, name, "-f")) {
+                cc.force = true;
+            } else if (std.mem.startsWith(u8, name, "-")) {
+                return unknownFlag(arena, name);
+            }
+        }
+        return .{ .command = .{ .config_convert = cc } };
+    }
     if (std.mem.eql(u8, sub, "init")) {
         var ci = ConfigInit{};
         var cur = Cursor{ .args = args[1..] };
@@ -296,6 +500,8 @@ fn parseConfig(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
                 ci.force = true;
             } else if (std.mem.eql(u8, name, "--config")) {
                 ci.common.config_path = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
+            } else if (std.mem.eql(u8, name, "--format")) {
+                ci.format = (try cur.value(fs, arena)) orelse return missingValue(arena, name);
             } else if (std.mem.startsWith(u8, name, "-")) {
                 return unknownFlag(arena, name);
             }
@@ -347,4 +553,46 @@ test "help and version" {
     defer arena.deinit();
     try std.testing.expect((try parseArgs(arena.allocator(), &.{"help"})) == .help);
     try std.testing.expect((try parseArgs(arena.allocator(), &.{"version"})).command == .version);
+}
+
+test "parse config convert" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const p = try parseArgs(arena.allocator(), &.{ "config", "convert", "--config", "config.json", "--to", "toml", "-o", "config.toml", "--force" });
+    const c = p.command.config_convert;
+    try std.testing.expectEqualStrings("config.json", c.common.config_path.?);
+    try std.testing.expectEqualStrings("toml", c.to.?);
+    try std.testing.expectEqualStrings("config.toml", c.output.?);
+    try std.testing.expect(c.force);
+}
+
+test "parse compose" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const p = try parseArgs(arena.allocator(), &.{ "compose", "--base", "base.png", "--svg", "mark.svg", "-o", "out.png", "--x", "-4", "--width", "128", "--opacity", "0.5", "--blend", "multiply" });
+    const c = p.command.compose;
+    try std.testing.expectEqualStrings("base.png", c.base.?);
+    try std.testing.expectEqualStrings("mark.svg", c.svg.?);
+    try std.testing.expectEqualStrings("out.png", c.output.?);
+    try std.testing.expectEqual(@as(i32, -4), c.x);
+    try std.testing.expectEqual(@as(u32, 128), c.width.?);
+    try std.testing.expectEqual(@as(f32, 0.5), c.opacity);
+    try std.testing.expectEqualStrings("multiply", c.blend.?);
+}
+
+test "parse svg render and png compose" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const s = (try parseArgs(a, &.{ "svg", "render", "--input", "a.svg", "-o", "a.png", "--height", "300" })).command.svg_render;
+    try std.testing.expectEqualStrings("a.svg", s.input.?);
+    try std.testing.expectEqualStrings("a.png", s.output.?);
+    try std.testing.expectEqual(@as(u32, 300), s.height.?);
+
+    const p = (try parseArgs(a, &.{ "png", "compose", "--base", "base.png", "--layer", "a.png,x=1,y=2,opacity=0.7,blend=screen", "-o", "out.png" })).command.png_compose;
+    try std.testing.expectEqualStrings("base.png", p.base.?);
+    try std.testing.expectEqualStrings("out.png", p.output.?);
+    try std.testing.expectEqual(@as(usize, 1), p.layers.len);
+    try std.testing.expectEqualStrings("a.png,x=1,y=2,opacity=0.7,blend=screen", p.layers[0]);
 }

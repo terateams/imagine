@@ -49,36 +49,31 @@
 4. 若响应结构不同，扩展 `parseResponse`（当前支持 `data[].b64_json` 与 `data[].url`）。
 5. 加单元测试（body 形状）；更新 `config.template` 与 README/SKILL 文档。
 
-## 4. 配置 schema（`~/.imagine/config.json`）
+## 4. 配置 schema（`~/.imagine/config.toml`）
 
-路径优先级：`--config <path>` > `$IMAGINE_CONFIG` > `~/.imagine/config.json`。
+路径优先级：`--config <path>` > `$IMAGINE_CONFIG` > `~/.imagine/config.toml`；默认 TOML 不存在时兼容读取旧版 `~/.imagine/config.json`。
 
-```jsonc
-{
-  "output_dir": "~/.imagine/outputs",   // 相对输出目录（可选）
-  "concurrency": 0,                       // 0=按端点数自动；>0 固定并发
-  "models": {
-    "<model-name>": {
-      "backend": "azure_image | azure_flux",
-      "api_model": "传给 API 的真实 model 字段",
-      "endpoints": [                      // 多个端点 → 并发分摊
-        {
-          "base_url": "https://.../images/generations",
-          "api_key_env": "AZURE_API_KEY", // 从环境变量取 key
-          "api_key": "可选：直接写死 key（优先于 env）",
-          "auth": "bearer | api-key"       // 默认 bearer
-        }
-      ],
-      "defaults": {                        // 该模型的默认参数（被 CLI 覆盖）
-        "size": "1024x1024",
-        "width": 1024, "height": 1024,
-        "output_format": "png",
-        "output_compression": 100,
-        "quality": "high"
-      }
-    }
-  }
-}
+```toml
+output_dir = "~/.imagine/outputs"
+concurrency = 0 # 0=按端点数自动；>0 固定并发
+
+[models."<model-name>"]
+backend = "azure_image" # azure_image | azure_flux
+api_model = "传给 API 的真实 model 字段"
+
+[[models."<model-name>".endpoints]]
+base_url = "https://.../images/generations"
+api_key_env = "AZURE_API_KEY" # 从环境变量取 key
+api_key = "可选：直接写死 key（优先于 env）"
+auth = "bearer" # bearer | api-key，默认 bearer
+
+[models."<model-name>".defaults]
+size = "1024x1024"
+width = 1024
+height = 1024
+output_format = "png"
+output_compression = 100
+quality = "high"
 ```
 
 参数优先级：**CLI 选项 > 模型 `defaults` > 内置缺省**。

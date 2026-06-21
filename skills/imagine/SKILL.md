@@ -1,137 +1,148 @@
 ---
 name: imagine
-description: 使用 imagine CLI 调用多种图像生成模型 API（首批 Azure gpt-image-1.5 / gpt-image-2 / FLUX.2-pro）。用于文生图、批量生成、按模型名路由后端、同模型多端点并发生成，以及通过 --json 让 agent 解析结果。检测 imagine 二进制是否安装，未安装时引导用户一键安装。
+description: Use the imagine CLI to call multiple image-generation model APIs, including Azure gpt-image-1.5, gpt-image-2, and FLUX.2-pro. Use for text-to-image generation, batch generation, routing by model name, distributing one model across multiple endpoints, and parsing machine-readable --json results. Check whether the imagine binary is installed first, and guide installation when it is missing.
 ---
 
-# imagine — 通用图像生成 CLI 技能
+# imagine - Universal Image Generation CLI Skill
 
-`imagine` 是一个面向 AI agent 的通用图像生成命令行工具：统一前端参数，按**模型名**路由到不同后端，
-同一模型可配置多个端点（URL+KEY）做并发调度。输出单一静态二进制，不依赖 curl/jq/base64。
+`imagine` is a universal image-generation CLI for AI agents. It provides one
+frontend parameter set, routes requests to backends by model name, and can
+distribute one logical model across multiple endpoints (URL + key) for
+concurrent scheduling. It is a single static Zig binary and does not require
+`curl`, `jq`, or `base64`.
 
-## 何时使用本技能
+## When To Use This Skill
 
-- 文生图：给定 prompt 生成一张或多张图片并落盘。
-- 批量生成：从 JSON manifest 一次跑多个任务（不同模型/尺寸/数量）。
-- 需要 agent 解析结果：用 `--json` 得到结构化输出。
-- 查看 / 初始化配置，或排查"模型未配置 / 缺 key"。
+- Generate one or more images from a text prompt and save them to disk.
+- Run batch generation from a JSON manifest with multiple jobs.
+- Overlay an SVG on a PNG with `compose` when the binary was built with optional
+  `resvg` support.
+- Use `--json` when an agent needs structured output.
+- Inspect or initialize config, or troubleshoot missing models and credentials.
 
-支持的模型由 `~/.imagine/config.json` 决定；首批内置模板含 `gpt-image-1.5`、`gpt-image-2`、`FLUX.2-pro`。
+Configured models come from `~/.imagine/config.toml`. The legacy
+`~/.imagine/config.json` path is still supported for compatibility. The starter
+template includes `gpt-image-1.5`, `gpt-image-2`, and `FLUX.2-pro`.
 
-## 第 0 步（必做）：检测二进制是否安装
+## Step 0: Check The Binary
 
-调用任何功能前，先确认 `imagine` 是否可用：
+Before using any feature, verify that `imagine` is available:
 
 ```bash
 command -v imagine && imagine version
 ```
 
-- **若命中**（打印出路径和版本）→ 直接进入"使用方法"。
-- **若未命中**（command not found）→ **不要**直接尝试生成。先告知用户尚未安装，
-  并征求同意后协助安装（见下）。
+- If this prints a path and version, continue to the usage steps.
+- If the command is missing, do not try to generate images yet. Tell the user it
+  is not installed and ask for approval before helping install it.
 
-### 引导安装（需用户批准后再执行）
+### Installation Guidance
 
-向用户说明将要做什么（安装二进制到 `~/.local/bin`，安装技能到 `~/.agents/skills/imagine`），
-征得同意后选其一：
+Explain that installation will place the binary in `~/.local/bin` and the agent
+skill in `~/.agents/skills/imagine`. After the user approves, use one of these:
 
 ```bash
-# 方式 A：一键安装（推荐，自动判断系统类型，直接从 GitHub release 下载预编译
-#          二进制和技能包并校验 SHA-256，不编译）
+# Option A: one-line install, recommended. It auto-detects OS/arch, downloads
+# prebuilt artifacts from the GitHub release, and verifies SHA-256 checksums.
 curl -fsSL https://raw.githubusercontent.com/terateams/imagine/main/install.sh | sh
 
-# 方式 B：在源码仓库内开发安装（或目标平台无预编译产物时从源码构建，需 Zig ≥ 0.16.0）
+# Option B: source install for development or unsupported prebuilt platforms.
+# Requires Zig >= 0.16.0.
 make install
 ```
 
-安装后让用户确认 PATH 包含 `~/.local/bin`（脚本会在缺失时提示）。
-再次 `imagine version` 验证成功。
+After installation, make sure `~/.local/bin` is on PATH if needed, then verify
+again with `imagine version`.
 
-> Linux / macOS 用一键脚本即可（含 x86_64 与 arm64）。Windows 用户从
-> <https://github.com/terateams/imagine/releases/latest> 下载
-> `imagine-windows-x86_64.exe`（或 `-aarch64`）放入 PATH。
->
-> 一键脚本只下载预编译产物，不依赖本地 Zig；可用 `IMAGINE_VERSION=v0.1.0` 锁定版本。
-> 若目标平台没有预编译二进制（脚本会报错并提示），改用方式 B 从源码构建
-> （需 Zig ≥ 0.16.0；macOS: `brew install zig`，或 https://ziglang.org/download/）。
+Linux and macOS can use the one-line installer. Windows users should download
+`imagine-windows-x86_64.exe` or `imagine-windows-aarch64.exe` from the latest
+release and put it on PATH. The one-line installer only downloads prebuilt
+artifacts; use `IMAGINE_VERSION=v0.1.0` to pin a release. If no prebuilt binary
+exists for the platform, build from source with Zig >= 0.16.0.
 
-## 第 1 步：配置
+## Step 1: Configure
 
-默认配置路径 `~/.imagine/config.json`，可用 `$IMAGINE_CONFIG` 或 `--config <path>` 覆盖。
+The default config path is `~/.imagine/config.toml`. Override it with
+`$IMAGINE_CONFIG` or `--config <path>`.
 
 ```bash
-imagine config path          # 打印解析后的配置路径
-imagine config init          # 写入起始模板（含 3 个 Azure 模型）；--force 覆盖
-imagine config show          # 打印生效配置（key 自动脱敏）
-imagine models               # 列出已配置模型及就绪状态
-imagine models --json        # 机器可读
+imagine config path          # print the resolved config path
+imagine config init          # write the starter config; use --force to overwrite
+imagine config convert --config ~/.imagine/config.json --to toml -o ~/.imagine/config.toml
+imagine config show          # print effective config with keys redacted
+imagine models               # list configured models and readiness
+imagine models --json        # machine-readable model list
 ```
 
-密钥来源（优先级从高到低）：端点 `api_key` 字面值 > 端点 `api_key_env` 指向的环境变量。
-模板默认从 `AZURE_API_KEY` 读取：
+Credential precedence is endpoint `api_key` literal value first, then the
+environment variable named by endpoint `api_key_env`. The starter template reads
+from `AZURE_API_KEY`:
 
 ```bash
 export AZURE_API_KEY="your-azure-key"
 ```
 
-**同模型多端点并发**：在某个模型的 `endpoints` 数组里配置多个 `{base_url, api_key_env}`，
-imagine 会在生成多张图时把请求并发分摊到各端点（绕过单端点限流）。
+To distribute requests across multiple endpoints, add multiple `endpoints`
+tables under the same model. When generating multiple images, imagine fans
+requests across those endpoints.
 
-## 第 2 步：生成
+## Step 2: Generate
 
 ```bash
-# 单张（gpt-image-1.5）
+# Single image with gpt-image-1.5
 imagine generate -m gpt-image-1.5 -p "A photograph of a red fox in an autumn forest" -o fox.png
 
-# FLUX（用 width/height）
+# FLUX uses width/height
 imagine generate -m FLUX.2-pro -p "a city at dusk" --width 1024 --height 1024 -o city.png
 
-# 多张 + 并发（文件名自动加 -1 -2 …）
+# Multiple images with concurrency; filenames get numbered automatically
 imagine generate -m gpt-image-2 -p "logo concept" -n 4 -o logo.png -c 4
 
-# 只看请求体、不真正调用（排查参数）
+# Inspect the request body without calling the API
 imagine generate -m gpt-image-1.5 -p "test" --dry-run
 
-# 结构化输出供 agent 解析
+# Structured output for agents
 imagine generate -m gpt-image-1.5 -p "a red fox" -o fox.png --json
 ```
 
-常用选项：
+Common options:
 
-| 选项 | 说明 |
-|------|------|
-| `-m, --model` | 模型名（必填，路由后端） |
-| `-p, --prompt` | 提示词（必填，也可作位置参数） |
-| `-o, --output` | 输出文件（单张）或文件名前缀（多张） |
-| `-n, --n` | 生成数量（默认 1） |
-| `-s, --size` | 尺寸（gpt-image 系，见下方"模型尺寸支持"） |
-| `--width / --height` | 宽高（FLUX 系，替代 `--size`） |
-| `--format` | `png` / `jpeg`（gpt-image 系；不支持 webp） |
-| `--compression` | `0-100`（gpt-image 系） |
-| `--quality` | `low` / `medium` / `high` / `auto`（gpt-image 系） |
-| `--seed` | 随机种子（部分模型） |
-| `-c, --concurrency` | 并发请求数（默认=端点数） |
-| `--config` | 指定配置文件 |
-| `--json` | 输出 JSON 结果对象 |
-| `--dry-run` | 只打印请求体 |
-| `-q, --quiet` | 静默进度 |
+| Option | Description |
+|--------|-------------|
+| `-m, --model` | Model name to route to. Required. |
+| `-p, --prompt` | Prompt text. Required, or pass it as a positional argument. |
+| `-o, --output` | Output file for one image, or output stem for multiple images. |
+| `-n, --n` | Number of images. Default: 1. |
+| `-s, --size` | Size for gpt-image models. See model size notes below. |
+| `--width / --height` | Dimensions for FLUX models; use instead of `--size`. |
+| `--format` | `png` or `jpeg` for gpt-image output. WebP is not supported. |
+| `--compression` | Output compression from `0` to `100` for gpt-image output. |
+| `--quality` | `low`, `medium`, `high`, or `auto` for gpt-image output. |
+| `--seed` | Seed where supported. |
+| `-c, --concurrency` | Parallel requests. Default: endpoint count. |
+| `--config` | Use a specific config file. |
+| `--json` | Emit a JSON result object. |
+| `--dry-run` | Print the request body without calling the API. |
+| `-q, --quiet` | Suppress progress output. |
 
-### 模型尺寸支持（Azure，已对端点实测）
+### Model Sizes
 
-| 模型 | 尺寸约束 |
-|------|----------|
-| `gpt-image-1.5` | `--size` 仅限 `1024x1024`、`1536x1024`（横）、`1024x1536`（竖）、`auto` |
-| `gpt-image-2` | `--size` 任意 `宽x高`，但宽高都须为 **16 的倍数**，最长边 ≤ **3840**（还有最小像素下限） |
-| `FLUX.2-pro` | 用 `--width/--height`，每边 ≥ **64**，且 `宽×高 ≤ 4 MP`（即 ≤ `2048x2048`），无 16 整除要求 |
+| Model | Size constraints |
+|-------|------------------|
+| `gpt-image-1.5` | `--size` must be `1024x1024`, `1536x1024`, `1024x1536`, or `auto`. |
+| `gpt-image-2` | `--size` can be any `WxH` where both sides are multiples of 16 and the longest edge is <= 3840, subject to the provider's minimum pixel budget. |
+| `FLUX.2-pro` | Use `--width/--height`; each side must be >= 64 and `width * height <= 4 MP` (up to `2048x2048`). No 16-pixel divisibility requirement. |
 
-> 传入不支持的尺寸时，API 会返回明确的错误信息（例如 `Supported sizes are 1024x1024, 1024x1536, 1536x1024, and auto.`）。先 `--dry-run` 或读 `--json` 的 `errors[]` 可快速定位。
+Unsupported sizes return provider errors. Use `--dry-run` to inspect request
+bodies, or parse `errors[]` from `--json` output when a run fails.
 
-## 第 3 步：批量（manifest）
+## Step 3: Batch Generation
 
 ```bash
 imagine batch jobs.json -c 4
 ```
 
-`jobs.json` 格式：
+`jobs.json` format:
 
 ```json
 {
@@ -143,31 +154,99 @@ imagine batch jobs.json -c 4
 }
 ```
 
-每个 job 支持：`model, prompt, output, size, width, height, n, format, compression, quality, seed`。
+Each job supports: `model`, `prompt`, `output`, `size`, `width`, `height`, `n`,
+`format`, `compression`, `quality`, and `seed`.
 
-## agent 集成约定
+## Step 4: SVG/PNG Composition
 
-- **退出码**：`0` 成功；`1` 运行失败（含部分失败）；`2` 用法错误。据此判断是否需重试/上报。
-- **`--json` 结果对象**：
+Image composition is split into two reusable commands:
+
+- `svg render`: render an SVG to a transparent PNG at a controlled size.
+- `png compose`: overlay one or more PNG layers on top of a base PNG, in layer
+  order, with optional opacity and blend modes.
+
+Both require a binary built with optional `resvg` C API support when SVG
+rendering is involved:
+
+```bash
+zig build -Dsvg-overlay=true
+```
+
+A matching `resvg.h` is vendored. If you need to use headers or libraries from
+another location, pass:
+
+```bash
+zig build -Dsvg-overlay=true -Dresvg-include=/path/to/include -Dresvg-lib=/path/to/lib
+```
+
+Render SVG to PNG:
+
+```bash
+imagine svg render --input badge.svg -o badge.png --width 256
+```
+
+Compose multiple PNG layers:
+
+```bash
+imagine png compose --base photo.png \
+  --layer badge.png,x=24,y=24,opacity=1,blend=normal \
+  --layer shadow.png,x=20,y=28,opacity=0.45,blend=multiply \
+  -o composed.png
+```
+
+Shortcut for one SVG over one PNG:
+
+```bash
+imagine compose --base photo.png --svg badge.svg -o composed.png --x 24 --y 24 --width 256 --blend=normal
+```
+
+Options and layer specs:
+
+| Option | Description |
+|--------|-------------|
+| `svg render --input <svg>` | SVG input path. Required. |
+| `svg render -o, --output <png>` | Rendered PNG output path. Required. |
+| `svg render --width / --height <px>` | Rendered dimensions. If only one side is provided, aspect ratio is preserved. |
+| `png compose --base <png>` | Base PNG image. Required. |
+| `png compose --layer <spec>` | PNG layer spec. Repeat for multiple layers. |
+| `png compose -o, --output <png>` | Output PNG path. Required. |
+| Layer `x` / `y` | Overlay offset in pixels. Default: `0`. |
+| Layer `opacity` | `0` to `1`. Default: `1`. |
+| Layer `blend` | `normal`, `multiply`, `screen`, `overlay`, `darken`, or `lighten`. Default: `normal`. |
+
+For product images, use `normal` for copy/text layers, `multiply` for shadows,
+`screen` for highlights, and lower `opacity` for watermarks.
+
+## Agent Integration Contract
+
+- Exit codes: `0` success, `1` runtime failure including partial failure, `2`
+  usage error.
+- `--json` result object:
   ```json
   { "ok": true, "model": "...", "backend": "azure_image",
     "requested": 1, "succeeded": 1, "failed": 0,
     "images": [ { "path": "fox.png", "bytes": 12345 } ], "errors": [] }
   ```
-  解析 `images[].path` 拿到落盘文件；`ok=false` 时读 `errors[]`。
-- 先 `imagine models --json` 确认目标模型 `ready=true`（key 已就绪）再生成。
-- 不确定参数时先 `--dry-run` 校验请求体。
+- Parse `images[].path` to find generated files. When `ok=false`, read
+  `errors[]`.
+- Run `imagine models --json` first when you need to confirm that a model has
+  `ready=true` before generation.
+- Use `--dry-run` when parameters are uncertain.
 
-## 环境变量
+## Environment Variables
 
-| 变量 | 作用 |
-|------|------|
-| `IMAGINE_CONFIG` | 覆盖配置文件路径（默认 `~/.imagine/config.json`） |
-| `AZURE_API_KEY` | 模板默认的 Azure 密钥来源（可在配置中改 `api_key_env`） |
+| Variable | Purpose |
+|----------|---------|
+| `IMAGINE_CONFIG` | Override the config path. Default: `~/.imagine/config.toml`. |
+| `AZURE_API_KEY` | Default Azure credential source used by the starter config. You can change `api_key_env` in config. |
 
-## 排错
+## Troubleshooting
 
-- `model 'X' not found` → 跑 `imagine models` 看已配置模型，或 `imagine config init` 写模板。
-- `missing credential` → 设置对应环境变量（默认 `AZURE_API_KEY`）或在端点写 `api_key`。
-- `HTTP 4xx/5xx` → 错误信息来自上游 API（内容策略、配额、鉴权等），按提示处理。
-- 生成慢 / 限流 → 给模型配多个 `endpoints` 并加大 `-c`。
+- `model 'X' not found`: run `imagine models` to inspect configured models, or
+  run `imagine config init` to create a starter config.
+- `missing credential`: set the configured environment variable, defaulting to
+  `AZURE_API_KEY`, or set endpoint `api_key`.
+- `HTTP 4xx/5xx`: the error comes from the provider API, such as policy,
+  quota, or authentication failures.
+- Slow generation or rate limits: configure multiple `endpoints` for the model
+  and increase `-c`.

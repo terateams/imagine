@@ -80,6 +80,8 @@
         "Makefile",
         "install.sh",
         "skills",
+        "vendor",
+        "config.example.toml",
         "config.example.json",
     },
 }
